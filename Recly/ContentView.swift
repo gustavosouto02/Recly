@@ -18,7 +18,7 @@ struct ContentView: View {
 
             // Camada 0: Câmera
             if cameraManager.authorizationStatus == .authorized {
-                CameraPreview(session: cameraManager.session, cameraManager: cameraManager)
+                CameraPreview(session: cameraManager.previewSession, cameraManager: cameraManager)
                     .ignoresSafeArea()
 
             } else if cameraManager.authorizationStatus == .denied {
