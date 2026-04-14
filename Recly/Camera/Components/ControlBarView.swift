@@ -9,6 +9,7 @@ import SwiftUI
 
 struct ControlBarView: View {
     @ObservedObject var cameraManager: CameraManager
+    @State private var showWhiteBalance = false
     
     var body: some View {
         ZStack {
@@ -63,9 +64,14 @@ struct ControlBarView: View {
                     .font(.system(size: 20))
             }
             
-            Button(action: {}) {
+            Button {
+                withAnimation(.spring()) {
+                    cameraManager.showWhiteBalanceBar.toggle()
+                }
+            } label: {
                 Image(systemName: "sun.max.fill")
                     .font(.system(size: 22))
+                    .foregroundStyle(cameraManager.showWhiteBalanceBar ? .yellow : .white.opacity(0.8))
             }
         }
         .foregroundStyle(.white.opacity(0.8))

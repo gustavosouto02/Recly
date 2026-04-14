@@ -57,6 +57,10 @@ struct ContentView: View {
                     
                     Spacer()
                         
+                    if cameraManager.showWhiteBalanceBar {
+                        WhiteBalancePresetBarView(cameraManager: cameraManager)
+                            .padding(.bottom, 8)
+                    }
                     
                     ZoomControlView(cameraManager: cameraManager)
                     

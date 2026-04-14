@@ -22,6 +22,10 @@ class CameraManager: NSObject, ObservableObject {
     @Published var microphoneName: String = "..."
     @Published var showMicWarning: Bool = false
     @Published var micWarningMessage: String = ""
+    @Published var showWhiteBalanceBar: Bool = false
+    @Published var whiteBalance: Float = 0
+    @Published var selectedQuality: VideoQuality = .uhd4k30
+    @Published var projectName: String = "Recly"
     
     private let recordingActor = RecordingStateActor()
     private let sessionActor = CameraSessionActor()
@@ -202,6 +206,16 @@ class CameraManager: NSObject, ObservableObject {
     func switchCamera() {
         Task {
             await sessionActor.switchCamera()
+        }
+    }
+    
+    // MARK: - Camera Effects
+    
+    func setWhiteBalance(_ value: Float) {
+        self.whiteBalance = value
+        
+        Task {
+            await sessionActor.setWhiteBalance(temperature: value)
         }
     }
 }

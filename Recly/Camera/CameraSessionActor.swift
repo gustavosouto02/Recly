@@ -37,6 +37,10 @@ actor CameraSessionActor {
         session.addInput(input)
         currentInput = input
         
+        try? camera.lockForConfiguration()
+               camera.whiteBalanceMode = .continuousAutoWhiteBalance
+               camera.unlockForConfiguration()
+        
         // Audio
         if let mic = AVCaptureDevice.default(for: .audio),
            let micInput = try? AVCaptureDeviceInput(device: mic),
@@ -203,5 +207,39 @@ actor CameraSessionActor {
             device.torchMode = .off
             device.unlockForConfiguration()
         } catch {}
+    }
+    
+    func setWhiteBalance(temperature: Float) {
+        guard let device = currentInput?.device else { return }
+        
+        do {
+            try device.lockForConfiguration()
+            
+            if temperature == 0 {
+                if device.isWhiteBalanceModeSupported(.continuousAutoWhiteBalance) {
+                    device.whiteBalanceMode = .continuousAutoWhiteBalance
+                }
+            } else {
+                let tempAndTint = AVCaptureDevice.WhiteBalanceTemperatureAndTintValues(
+                    temperature: temperature,
+                    tint: 0
+                )
+                
+                let gains = device.deviceWhiteBalanceGains(for: tempAndTint)
+                
+                // Clamp de segurança
+                let clampedGains = AVCaptureDevice.WhiteBalanceGains(
+                    redGain: max(1.0, min(gains.redGain, device.maxWhiteBalanceGain)),
+                    greenGain: max(1.0, min(gains.greenGain, device.maxWhiteBalanceGain)),
+                    blueGain: max(1.0, min(gains.blueGain, device.maxWhiteBalanceGain))
+                )
+                
+                device.setWhiteBalanceModeLocked(with: clampedGains, completionHandler: nil)
+            }
+            
+            device.unlockForConfiguration()
+        } catch {
+            print("Erro White Balance: \(error)")
+        }
     }
 }
