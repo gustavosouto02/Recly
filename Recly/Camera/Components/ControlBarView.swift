@@ -11,70 +11,96 @@ struct ControlBarView: View {
     @ObservedObject var cameraManager: CameraManager
     
     var body: some View {
-            HStack(alignment: .center, spacing: 0) {
-                
-                // Lado Esquerdo: Configurações e Efeitos
-                HStack(spacing: 25) {
-                    Button(action: { /* Ação Config */ }) {
-                        Image(systemName: "gearshape.fill")
-                            .font(.system(size: 20))
-                    }
-                    
-                    Button(action: { /* Ação Efeitos/Luz */ }) {
-                        Image(systemName: "sun.max.fill")
-                            .font(.system(size: 22))
-                    }
-                }
-                .frame(maxWidth: .infinity)
-                .foregroundStyle(.white.opacity(0.8))
-                
-                // Centro: Botão de Gravação (Destaque)
-                Button {
-                    cameraManager.isRecording ? cameraManager.stopRecording() : cameraManager.startRecording()
-                } label: {
-                    ZStack {
-                        Circle()
-                            .strokeBorder(.white, lineWidth: 3)
-                            .frame(width: 72, height: 72)
-                        
-                        RoundedRectangle(cornerRadius: cameraManager.isRecording ? 6 : 35)
-                            .fill(.red)
-                            .frame(width: cameraManager.isRecording ? 28 : 60,
-                                   height: cameraManager.isRecording ? 28 : 60)
-                            .animation(.spring(response: 0.3, dampingFraction: 0.7), value: cameraManager.isRecording)
-                    }
-                }
-                .padding(.horizontal, 10)
-                
-                // Lado Direito: Botão Útil e Flip
-                HStack(spacing: 25) {
-                    Button(action: { /* Botão extra futuro */ }) {
-                        Image(systemName: "sparkles")
-                            .font(.system(size: 20))
-                    }
-                    
-                    Button(action: {
-                        withAnimation(.easeInOut) {
-                            cameraManager.switchCamera()
-                        }
-                    }) {
-                        Image(systemName: "arrow.triangle.2.circlepath.camera.fill")
-                            .font(.system(size: 20))
-                    }
-                }
-                .frame(maxWidth: .infinity)
-                .foregroundStyle(.white.opacity(0.8))
+        ZStack {
+            
+            // 🔹 Conteúdo lateral (some quando grava)
+            HStack {
+                leftControls
+                Spacer()
+                rightControls
             }
-            .padding(.vertical, 12)
-            .padding(.horizontal, 20)
-            .background(.ultraThinMaterial) // Efeito de vidro da Apple
-            .clipShape(RoundedRectangle(cornerRadius: 35, style: .continuous))
+            .opacity(cameraManager.isRecording ? 0 : 1)
+            .scaleEffect(cameraManager.isRecording ? 0.8 : 1)
+            .blur(radius: cameraManager.isRecording ? 10 : 0)
+            .animation(.easeInOut(duration: 0.25), value: cameraManager.isRecording)
+            
+            // 🔴 Botão central (sempre visível)
+            recordButton
+                .zIndex(1)
+        }
+        .padding(.vertical, 12)
+        .padding(.horizontal, 20)
+        .background(backgroundView)
+        .animation(.easeInOut(duration: 0.3), value: cameraManager.isRecording)
+    }
+    
+    private var recordButton: some View {
+        Button {
+            cameraManager.isRecording
+            ? cameraManager.stopRecording()
+            : cameraManager.startRecording()
+        } label: {
+            ZStack {
+                Circle()
+                    .strokeBorder(.white, lineWidth: 3)
+                    .frame(width: 72, height: 72)
+                
+                RoundedRectangle(cornerRadius: cameraManager.isRecording ? 6 : 35)
+                    .fill(.red)
+                    .frame(
+                        width: cameraManager.isRecording ? 28 : 60,
+                        height: cameraManager.isRecording ? 28 : 60
+                    )
+                    .animation(.spring(response: 0.3, dampingFraction: 0.7), value: cameraManager.isRecording)
+            }
+        }
+    }
+    
+    private var leftControls: some View {
+        HStack(spacing: 25) {
+            Button(action: {}) {
+                Image(systemName: "gearshape.fill")
+                    .font(.system(size: 20))
+            }
+            
+            Button(action: {}) {
+                Image(systemName: "sun.max.fill")
+                    .font(.system(size: 22))
+            }
+        }
+        .foregroundStyle(.white.opacity(0.8))
+    }
+    
+    private var rightControls: some View {
+        HStack(spacing: 25) {
+            Button(action: {}) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 20))
+            }
+            
+            Button(action: {
+                withAnimation(.easeInOut) {
+                    cameraManager.switchCamera()
+                }
+            }) {
+                Image(systemName: "arrow.triangle.2.circlepath.camera.fill")
+                    .font(.system(size: 20))
+            }
+        }
+        .foregroundStyle(.white.opacity(0.8))
+    }
+    
+    private var backgroundView: some View {
+        RoundedRectangle(cornerRadius: 35, style: .continuous)
+            .fill(.ultraThinMaterial)
             .overlay(
-                RoundedRectangle(cornerRadius: 35, style: .continuous)
+                RoundedRectangle(cornerRadius: 35)
                     .stroke(Color.white.opacity(0.1), lineWidth: 1)
             )
             .shadow(color: .black.opacity(0.3), radius: 20, x: 0, y: 10)
-        }
+            .opacity(cameraManager.isRecording ? 0.7 : 1)
+            .scaleEffect(cameraManager.isRecording ? 0.9 : 1)
+    }
 }
 
 #Preview {

@@ -11,7 +11,7 @@ import SwiftUI
 
 actor CameraSessionActor {
     
-    let session = AVCaptureSession()
+    nonisolated let session = AVCaptureSession()
     nonisolated var unsafeSession: AVCaptureSession {
         session
     }
@@ -19,6 +19,7 @@ actor CameraSessionActor {
     
     private var currentInput: AVCaptureDeviceInput?
     private var audioInput: AVCaptureDeviceInput?
+    private var torchTask: Task<Void, Never>?
     
     // MARK: - Setup
     
@@ -85,6 +86,40 @@ actor CameraSessionActor {
     }
     
     // MARK: - Audio
+
+    func getCurrentMicrophoneName() -> String {
+        let session = AVAudioSession.sharedInstance()
+        
+        guard let input = session.currentRoute.inputs.first else {
+            return "Sem microfone"
+        }
+        
+        let portType = input.portType
+        let name = input.portName.lowercased()
+        
+        if name.count > 3 &&
+           !name.contains("microphone") &&
+           !name.contains("headset") {
+            return input.portName // nome real (ex: "Rode Wireless GO II")
+        }
+        
+        switch portType {
+        case .builtInMic:
+            return "iPhone"
+            
+        case .headsetMic:
+            return "Fone com fio"
+            
+        case .bluetoothHFP, .bluetoothLE, .bluetoothA2DP:
+            return "Bluetooth"
+            
+        case .usbAudio:
+            return "USB"
+            
+        default:
+            return name // fallback real (tipo “Rode Wireless GO II” 🔥)
+        }
+    }
     
     func getAudioLevel() -> Float {
         guard let connection = videoOutput.connection(with: .audio),
@@ -122,5 +157,51 @@ actor CameraSessionActor {
         }
         
         session.commitConfiguration()
+    }
+    
+    func startTorchPulse() {
+        guard let device = currentInput?.device,
+              device.hasTorch,
+              device.position == .back else { return }
+        
+        torchTask?.cancel()
+        
+        torchTask = Task {
+            while !Task.isCancelled {
+                do {
+                    try device.lockForConfiguration()
+                    
+                    // 🔥 intensidade bem baixa (quase imperceptível)
+                    try device.setTorchModeOn(level: 0.005)
+                    
+                    device.unlockForConfiguration()
+                    
+                    try await Task.sleep(nanoseconds: 100_000_000) // 0.2s ligado
+                    
+                    try device.lockForConfiguration()
+                    device.torchMode = .off
+                    device.unlockForConfiguration()
+                    
+                    try await Task.sleep(nanoseconds: 3_500_000_000) // pausa maior
+                    
+                } catch {
+                    break
+                }
+            }
+        }
+    }
+    
+    func stopTorchPulse() {
+        torchTask?.cancel()
+        torchTask = nil
+        
+        guard let device = currentInput?.device,
+              device.hasTorch else { return }
+        
+        do {
+            try device.lockForConfiguration()
+            device.torchMode = .off
+            device.unlockForConfiguration()
+        } catch {}
     }
 }

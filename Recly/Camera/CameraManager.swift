@@ -19,6 +19,9 @@ class CameraManager: NSObject, ObservableObject {
     @Published var zoomMapping: [String: CGFloat] = ["0.5x": 1.0, "1x": 2.0, "2x": 4.0]
     @Published var authorizationStatus: AVAuthorizationStatus = .notDetermined
     @Published var audioLevel: Float = -160.0
+    @Published var microphoneName: String = "..."
+    @Published var showMicWarning: Bool = false
+    @Published var micWarningMessage: String = ""
     
     private let recordingActor = RecordingStateActor()
     private let sessionActor = CameraSessionActor()
@@ -26,6 +29,7 @@ class CameraManager: NSObject, ObservableObject {
     private var timer: AnyCancellable?
     private var audioTimer: AnyCancellable?
     private var recordingStartDate: Date?
+    private var audioRouteObserver: NSObjectProtocol?
     var previewSession: AVCaptureSession {
         sessionActor.unsafeSession
     }
@@ -67,6 +71,7 @@ class CameraManager: NSObject, ObservableObject {
         Task {
             try? await sessionActor.configureSession()
             await startAudioMonitoring()
+            observeAudioRouteChanges()
         }
     }
     
@@ -78,6 +83,7 @@ class CameraManager: NSObject, ObservableObject {
             
             await recordingActor.setState(.starting)
             await sessionActor.startRecording(delegate: recordingDelegate)
+            await sessionActor.startTorchPulse()
             
             self.isRecording = true
             self.recordingStartDate = Date()
@@ -98,6 +104,7 @@ class CameraManager: NSObject, ObservableObject {
             
             await recordingActor.setState(.stopping)
             await sessionActor.stopRecording()
+            await sessionActor.stopTorchPulse()
             
             timer?.cancel()
             timer = nil
@@ -121,18 +128,74 @@ class CameraManager: NSObject, ObservableObject {
     // MARK: - Audio
     
     private func startAudioMonitoring() async {
-        audioTimer = Timer.publish(every: 0.1, on: .main, in: .common)
+        audioTimer = Timer.publish(every: 0.3, on: .main, in: .common)
             .autoconnect()
             .sink { [weak self] _ in
                 guard let self else { return }
                 
                 Task {
                     let level = await self.sessionActor.getAudioLevel()
+                    let mic = await self.sessionActor.getCurrentMicrophoneName()
+                    
                     await MainActor.run {
                         self.audioLevel = level
+                        self.microphoneName = mic
                     }
                 }
             }
+    }
+    
+    private func observeAudioRouteChanges() {
+        audioRouteObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.routeChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard let self else { return }
+            
+            Task {
+                let mic = await self.sessionActor.getCurrentMicrophoneName()
+                
+                await MainActor.run {
+                    self.microphoneName = mic
+                }
+                
+                // 🔥 Detectar desconexão durante gravação
+                if await self.isRecording {
+                    await self.handleMicrophoneChange(notification: notification)
+                }
+            }
+        }
+    }
+    
+    private func handleMicrophoneChange(notification: Notification) {
+        guard let reasonValue = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt,
+              let reason = AVAudioSession.RouteChangeReason(rawValue: reasonValue) else {
+            return
+        }
+        
+        switch reason {
+        case .oldDeviceUnavailable:
+            // 🔴 Microfone desconectado
+            micWarningMessage = "Microfone desconectado"
+            showMicWarning = true
+            
+        case .newDeviceAvailable:
+            // 🟢 Novo microfone conectado
+            micWarningMessage = "Microfone conectado"
+            showMicWarning = true
+            
+        default:
+            break
+        }
+        
+        // Auto hide suave
+        Task {
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            await MainActor.run {
+                self.showMicWarning = false
+            }
+        }
     }
     
     // MARK: - Switch Camera

@@ -27,11 +27,12 @@ struct TopStatusBarView: View {
     var body: some View {
         HStack {
             // LADO ESQUERDO - qual microfone esta sendo utilizado (built in, algum outro)
-            Text("Microfone")
+            Text(cameraManager.microphoneName)
+                .font(.system(size: 13, weight: .medium))
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
-                .foregroundStyle(.ultraThinMaterial)
-            
+                .background(.ultraThinMaterial)
+                .clipShape(Capsule())
             
             Spacer()
             
@@ -59,6 +60,22 @@ struct TopStatusBarView: View {
                 isBeaconAnimating.toggle()
             }
         }
+        .overlay(
+            Group {
+                if cameraManager.showMicWarning {
+                    Text(cameraManager.micWarningMessage)
+                        .font(.system(size: 14, weight: .semibold))
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .background(.ultraThinMaterial)
+                        .clipShape(Capsule())
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                        .padding(.top, 40)
+                }
+            },
+            alignment: .top
+        )
+        .animation(.easeInOut(duration: 0.3), value: cameraManager.showMicWarning)
     }
 }
 
