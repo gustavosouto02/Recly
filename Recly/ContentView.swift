@@ -5,7 +5,7 @@
 //  Created by Gustavo Souto Pereira on 08/04/26.
 //
 
-import AVFoundation
+internal import AVFoundation
 import SwiftUI
 import AVKit
 

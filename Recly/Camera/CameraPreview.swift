@@ -6,7 +6,7 @@
 //
 
 import SwiftUI
-import AVFoundation
+internal import AVFoundation
 
 struct CameraPreview: UIViewRepresentable {
     let session: AVCaptureSession

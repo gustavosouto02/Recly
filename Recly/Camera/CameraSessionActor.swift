@@ -6,7 +6,7 @@
 //
 
 import Foundation
-import AVFoundation
+internal import AVFoundation
 import SwiftUI
 
 actor CameraSessionActor {
@@ -34,12 +34,38 @@ actor CameraSessionActor {
             throw NSError(domain: "Camera", code: -1)
         }
         
-        session.addInput(input)
-        currentInput = input
+        if session.canAddInput(input) {
+                session.addInput(input)
+                currentInput = input
+            }
         
-        try? camera.lockForConfiguration()
-               camera.whiteBalanceMode = .continuousAutoWhiteBalance
-               camera.unlockForConfiguration()
+        do {
+                try camera.lockForConfiguration()
+                
+                // Foco contínuo e suave (Crucial para não ficar embaçado)
+                if camera.isFocusModeSupported(.continuousAutoFocus) {
+                    camera.focusMode = .continuousAutoFocus
+                }
+                
+                // Auto exposição contínua
+                if camera.isExposureModeSupported(.continuousAutoExposure) {
+                    camera.exposureMode = .continuousAutoExposure
+                }
+                
+                // HDR Automático (Resolve luz estourada/escura)
+                if camera.activeFormat.isVideoHDRSupported {
+                    camera.automaticallyAdjustsVideoHDREnabled = true
+                }
+                
+                // Priorizar qualidade sobre latência
+                if camera.isGlobalToneMappingEnabled {
+                    camera.isGlobalToneMappingEnabled = true
+                }
+                
+                camera.unlockForConfiguration()
+            } catch {
+                print("Erro hardware: \(error)")
+            }
         
         // Audio
         if let mic = AVCaptureDevice.default(for: .audio),
@@ -50,8 +76,15 @@ actor CameraSessionActor {
         }
         
         if session.canAddOutput(videoOutput) {
-            session.addOutput(videoOutput)
-        }
+                session.addOutput(videoOutput)
+                
+                // 🔥 ESTABILIZAÇÃO CINEMATOGRÁFICA (O que faz o vídeo parecer profissional)
+                if let connection = videoOutput.connection(with: .video) {
+                    if connection.isVideoStabilizationSupported {
+                        connection.preferredVideoStabilizationMode = .cinematicExtended
+                    }
+                }
+            }
         
         session.commitConfiguration()
         session.startRunning()
@@ -59,9 +92,8 @@ actor CameraSessionActor {
     
     // MARK: - Recording
     
-    func startRecording(delegate: AVCaptureFileOutputRecordingDelegate) {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString + ".mov")
+    func startRecording(delegate: AVCaptureFileOutputRecordingDelegate, fileName: String) {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(fileName)
         
         videoOutput.startRecording(to: url, recordingDelegate: delegate)
     }
@@ -163,7 +195,7 @@ actor CameraSessionActor {
         session.commitConfiguration()
     }
     
-    func startTorchPulse() {
+    func startTorchPulse(interval: Double) {
         guard let device = currentInput?.device,
               device.hasTorch,
               device.position == .back else { return }
@@ -180,13 +212,13 @@ actor CameraSessionActor {
                     
                     device.unlockForConfiguration()
                     
-                    try await Task.sleep(nanoseconds: 100_000_000) // 0.2s ligado
+                    try await Task.sleep(nanoseconds: 100_000_000)
                     
                     try device.lockForConfiguration()
                     device.torchMode = .off
                     device.unlockForConfiguration()
                     
-                    try await Task.sleep(nanoseconds: 3_500_000_000) // pausa maior
+                    try? await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
                     
                 } catch {
                     break
@@ -240,6 +272,73 @@ actor CameraSessionActor {
             device.unlockForConfiguration()
         } catch {
             print("Erro White Balance: \(error)")
+        }
+    }
+    
+    func applyVideoQuality(_ quality: VideoQuality) {
+        guard let device = currentInput?.device else { return }
+        
+        session.beginConfiguration()
+        
+        // 🎯 Mantém preset (isso é seguro)
+        if session.canSetSessionPreset(quality.sessionPreset) {
+                session.sessionPreset = quality.sessionPreset
+            } else {
+                // Se não suportar 4K, tenta um fallback para 1080p
+                session.sessionPreset = .hd1920x1080
+            }
+        
+        do {
+            try device.lockForConfiguration()
+            
+            // 🔥 NÃO troca activeFormat agressivamente
+            // deixa o iOS escolher o melhor formato
+            
+            let desiredFPS = Double(quality.fps)
+            
+            // 🎯 Ajusta FPS com segurança
+            let supported = device.activeFormat.videoSupportedFrameRateRanges
+            
+            if let range = supported.first,
+               range.minFrameRate <= desiredFPS,
+               desiredFPS <= range.maxFrameRate {
+                
+                device.activeVideoMinFrameDuration = CMTime(value: 1, timescale: CMTimeScale(quality.fps))
+                device.activeVideoMaxFrameDuration = CMTime(value: 1, timescale: CMTimeScale(quality.fps))
+            }
+            
+            // ✅ RESTAURA COMPORTAMENTO NATIVO DO IPHONE
+            
+            if device.isFocusModeSupported(.continuousAutoFocus) {
+                device.focusMode = .continuousAutoFocus
+            }
+            
+            if device.isExposureModeSupported(.continuousAutoExposure) {
+                device.exposureMode = .continuousAutoExposure
+            }
+            
+            if device.isWhiteBalanceModeSupported(.continuousAutoWhiteBalance) {
+                device.whiteBalanceMode = .continuousAutoWhiteBalance
+            }
+            
+            // 🔥 MELHOR QUALIDADE DE IMAGEM
+            if device.isSmoothAutoFocusSupported {
+                device.isSmoothAutoFocusEnabled = true
+            }
+            
+            device.unlockForConfiguration()
+            
+        } catch {
+            print("Erro ao aplicar qualidade: \(error)")
+        }
+        
+        session.commitConfiguration()
+    }
+    
+    func setCinematicEnabled(_ enabled: Bool) {
+        guard let connection = videoOutput.connection(with: .video) else { return }
+        if connection.isVideoStabilizationSupported {
+            connection.preferredVideoStabilizationMode = enabled ? .cinematicExtended : .off
         }
     }
 }

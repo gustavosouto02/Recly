@@ -5,7 +5,7 @@
 //  Created by Gustavo Souto Pereira on 08/04/26.
 //
 
-import AVFoundation
+internal import AVFoundation
 import SwiftUI
 import Combine
 import Photos
@@ -26,6 +26,10 @@ class CameraManager: NSObject, ObservableObject {
     @Published var whiteBalance: Float = 0
     @Published var selectedQuality: VideoQuality = .uhd4k30
     @Published var projectName: String = "Recly"
+    @Published var filePrefix: String = ""
+    @Published var isCinematicEnabled: Bool = true
+    @Published var isTallyLightEnabled: Bool = true
+    @Published var tallyInterval: Double = 3.5
     
     private let recordingActor = RecordingStateActor()
     private let sessionActor = CameraSessionActor()
@@ -74,6 +78,7 @@ class CameraManager: NSObject, ObservableObject {
     func setup() {
         Task {
             try? await sessionActor.configureSession()
+            await sessionActor.applyVideoQuality(self.selectedQuality) 
             await startAudioMonitoring()
             observeAudioRouteChanges()
         }
@@ -86,8 +91,20 @@ class CameraManager: NSObject, ObservableObject {
             guard await recordingActor.canStartRecording() else { return }
             
             await recordingActor.setState(.starting)
-            await sessionActor.startRecording(delegate: recordingDelegate)
-            await sessionActor.startTorchPulse()
+            
+            let timestamp = Int(Date().timeIntervalSince1970)
+            let baseName = projectName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Recly" : projectName
+            let safeName = baseName
+                .components(separatedBy: CharacterSet.alphanumerics.inverted)
+                .filter { !$0.isEmpty }
+                .joined(separator: "_")
+            let fileName = "\(safeName)_\(timestamp).mov"
+    
+            await sessionActor.startRecording(delegate: recordingDelegate, fileName: fileName)
+           
+            if isTallyLightEnabled {
+                await sessionActor.startTorchPulse(interval: tallyInterval)
+            }
             
             self.isRecording = true
             self.recordingStartDate = Date()
@@ -217,6 +234,26 @@ class CameraManager: NSObject, ObservableObject {
         Task {
             await sessionActor.setWhiteBalance(temperature: value)
         }
+    }
+    
+    func setVideoQuality(_ quality: VideoQuality) {
+        self.selectedQuality = quality
+        
+        Task {
+            await sessionActor.applyVideoQuality(quality)
+        }
+    }
+    
+    func setCinematicEnabled(_ enabled: Bool) {
+        self.isCinematicEnabled = enabled
+        Task {
+            await sessionActor.setCinematicEnabled(enabled)
+        }
+    }
+    
+    func sanitizeProjectName() {
+        let trimmed = projectName.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.projectName = trimmed
     }
 }
 

@@ -10,6 +10,7 @@ import SwiftUI
 struct ControlBarView: View {
     @ObservedObject var cameraManager: CameraManager
     @State private var showWhiteBalance = false
+    @State private var showSettings = false
     
     var body: some View {
         ZStack {
@@ -28,6 +29,12 @@ struct ControlBarView: View {
             // 🔴 Botão central (sempre visível)
             recordButton
                 .zIndex(1)
+        }
+        .sheet(isPresented: $showSettings) {
+            CameraSettingsView(cameraManager: cameraManager, isPresented: $showSettings)
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+                .presentationBackground(.ultraThinMaterial)
         }
         .padding(.vertical, 12)
         .padding(.horizontal, 20)
@@ -59,7 +66,11 @@ struct ControlBarView: View {
     
     private var leftControls: some View {
         HStack(spacing: 25) {
-            Button(action: {}) {
+            Button {
+                withAnimation {
+                    showSettings.toggle()
+                }
+            } label: {
                 Image(systemName: "gearshape.fill")
                     .font(.system(size: 20))
             }
