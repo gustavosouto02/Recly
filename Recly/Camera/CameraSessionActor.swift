@@ -20,6 +20,8 @@ actor CameraSessionActor {
     private var currentInput: AVCaptureDeviceInput?
     private var audioInput: AVCaptureDeviceInput?
     private var torchTask: Task<Void, Never>?
+    private var virtualBackCamera: AVCaptureDevice?
+    private var zoomLabelMapping: [String: CGFloat] = ["0.5x": 1.0, "1x": 2.0, "2x": 4.0]
     
     // MARK: - Setup
     
@@ -28,16 +30,24 @@ actor CameraSessionActor {
         
         session.sessionPreset = .hd4K3840x2160
         
-        guard let camera = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back),
+        let discovery = AVCaptureDevice.DiscoverySession(
+            deviceTypes: [.builtInTripleCamera, .builtInDualWideCamera, .builtInWideAngleCamera],
+            mediaType: .video,
+            position: .back
+        )
+        
+        guard let camera = discovery.devices.first,
               let input = try? AVCaptureDeviceInput(device: camera),
               session.canAddInput(input) else {
             throw NSError(domain: "Camera", code: -1)
         }
         
+        virtualBackCamera = camera
+        
         if session.canAddInput(input) {
-                session.addInput(input)
-                currentInput = input
-            }
+            session.addInput(input)
+            currentInput = input
+        }
         
         do {
                 try camera.lockForConfiguration()
@@ -78,11 +88,10 @@ actor CameraSessionActor {
         if session.canAddOutput(videoOutput) {
                 session.addOutput(videoOutput)
                 
-                // 🔥 ESTABILIZAÇÃO CINEMATOGRÁFICA (O que faz o vídeo parecer profissional)
-                if let connection = videoOutput.connection(with: .video) {
-                    if connection.isVideoStabilizationSupported {
-                        connection.preferredVideoStabilizationMode = .cinematicExtended
-                    }
+                // 🔥 Estabilização AUTO para evitar crop agressivo na ultra wide
+                if let connection = videoOutput.connection(with: .video),
+                   connection.isVideoStabilizationSupported {
+                    connection.preferredVideoStabilizationMode = .auto
                 }
             }
         
@@ -102,24 +111,147 @@ actor CameraSessionActor {
         videoOutput.stopRecording()
     }
     
-    // MARK: - Zoom
+    // MARK: - Zoom (Virtual Device)
+    
+    private func updateZoomLabelMappingIfPossible(for device: AVCaptureDevice) {
+        guard device.isVirtualDevice else { return }
+        
+        // Exemplo comum em virtual device:
+        // 1.0 = 0.5x óptico, ~2.0 = 1x óptico, ~4.0 = 2x óptico
+        let switchOvers = device.virtualDeviceSwitchOverVideoZoomFactors.map { CGFloat(truncating: $0) }
+        
+        if switchOvers.count >= 2 {
+            zoomLabelMapping["0.5x"] = 1.0
+            zoomLabelMapping["1x"] = switchOvers[0]
+            zoomLabelMapping["2x"] = switchOvers[1]
+        } else if switchOvers.count == 1 {
+            zoomLabelMapping["0.5x"] = 1.0
+            zoomLabelMapping["1x"] = switchOvers[0]
+            zoomLabelMapping["2x"] = min(switchOvers[0] * 2.0, device.activeFormat.videoMaxZoomFactor)
+        } else {
+            zoomLabelMapping["0.5x"] = 1.0
+            zoomLabelMapping["1x"] = 2.0
+            zoomLabelMapping["2x"] = 4.0
+        }
+    }
+    
+    func getZoomLabelMapping() -> [String: CGFloat] {
+        if let device = currentInput?.device {
+            updateZoomLabelMappingIfPossible(for: device)
+        }
+        return zoomLabelMapping
+    }
     
     func setZoom(factor: CGFloat) -> CGFloat {
         guard let device = currentInput?.device else { return 1.0 }
         
+        if device.position == .back {
+            updateZoomLabelMappingIfPossible(for: device)
+        }
+        
+        do {
+            try device.lockForConfiguration()
+            let minZoom = max(1.0, device.minAvailableVideoZoomFactor)
+            let maxZoom = min(device.activeFormat.videoMaxZoomFactor, device.maxAvailableVideoZoomFactor)
+            let clamped = max(minZoom, min(factor, maxZoom))
+            device.ramp(toVideoZoomFactor: clamped, withRate: 4.0)
+            device.unlockForConfiguration()
+            return clamped
+        } catch {
+            return device.videoZoomFactor
+        }
+    }
+
+    // Adicione no CameraSessionActor:
+
+//    func setFocusAndExposure(at point: CGPoint, in previewLayer: AVCaptureVideoPreviewLayer) {
+//        guard let device = currentInput?.device else { return }
+//        
+//        let pointOfInterest = previewLayer.captureDevicePointConverted(fromLayerPoint: point)
+//        
+//        do {
+//            try device.lockForConfiguration()
+//            
+//            // 🔥 FOCO NO PONTO TOCADO (igual app nativo)
+//            if device.isFocusPointOfInterestSupported && device.isFocusModeSupported(.autoFocus) {
+//                device.focusPointOfInterest = pointOfInterest
+//                device.focusMode = .autoFocus
+//            }
+//            
+//            // 🔥 EXPOSIÇÃO NO PONTO TOCADO (igual app nativo)
+//            if device.isExposurePointOfInterestSupported && device.isExposureModeSupported(.autoExpose) {
+//                device.exposurePointOfInterest = pointOfInterest
+//                device.exposureMode = .autoExpose
+//            }
+//            
+//            device.unlockForConfiguration()
+//        } catch {
+//            print("Erro foco/exposição: \(error)")
+//        }
+//    }
+    
+    func setFocusOnly(at point: CGPoint, in previewLayer: AVCaptureVideoPreviewLayer) {
+        guard let device = currentInput?.device else { return }
+        
+        let pointOfInterest = previewLayer.captureDevicePointConverted(fromLayerPoint: point)
+        
         do {
             try device.lockForConfiguration()
             
-            let clamped = max(1.0, min(factor, device.activeFormat.videoMaxZoomFactor))
-            device.ramp(toVideoZoomFactor: clamped, withRate: 2.0)
+            // 🎯 Apenas foco no ponto tocado
+            if device.isFocusPointOfInterestSupported && device.isFocusModeSupported(.autoFocus) {
+                device.focusPointOfInterest = pointOfInterest
+                device.focusMode = .autoFocus
+            }
+            
+            // 📊 Exposição automática no ponto tocado (sem travar)
+            if device.isExposurePointOfInterestSupported && device.isExposureModeSupported(.autoExpose) {
+                device.exposurePointOfInterest = pointOfInterest
+                device.exposureMode = .autoExpose
+            }
             
             device.unlockForConfiguration()
-            return clamped
-            
         } catch {
-            return 1.0
+            print("Erro foco: \(error)")
         }
     }
+    
+    func restoreExposureBias(_ bias: Float) {
+        guard let device = currentInput?.device else { return }
+        
+        do {
+            try device.lockForConfiguration()
+            defer { device.unlockForConfiguration() }
+            
+            // 🔄 Volta para exposição contínua com o bias do usuário
+            if device.isExposureModeSupported(.continuousAutoExposure) {
+                device.exposureMode = .continuousAutoExposure
+            }
+            
+            let clamped = min(max(bias, device.minExposureTargetBias), device.maxExposureTargetBias)
+            device.setExposureTargetBias(clamped, completionHandler: nil)
+            
+        } catch {
+            print("Erro restore bias: \(error)")
+        }
+    }
+
+//    func lockExposureAtCurrent() {
+//        guard let device = currentInput?.device else { return }
+//        
+//        do {
+//            try device.lockForConfiguration()
+//            
+//            // 🔒 TRAVA exposição no valor atual (igual app nativo após tap)
+//            if device.isExposureModeSupported(.locked) {
+//                device.exposureMode = .locked
+//            }
+//            
+//            device.unlockForConfiguration()
+//        } catch {
+//            print("Erro lock exposure: \(error)")
+//        }
+//    }
     
     // MARK: - Audio
 
@@ -173,22 +305,30 @@ actor CameraSessionActor {
         let currentPosition = currentInput.device.position
         let newPosition: AVCaptureDevice.Position = currentPosition == .back ? .front : .back
         
-        guard let newDevice = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: newPosition),
-              let newInput = try? AVCaptureDeviceInput(device: newDevice) else {
+        let newDevice: AVCaptureDevice?
+        if newPosition == .back {
+            let discovery = AVCaptureDevice.DiscoverySession(
+                deviceTypes: [.builtInTripleCamera, .builtInDualWideCamera, .builtInWideAngleCamera],
+                mediaType: .video,
+                position: .back
+            )
+            newDevice = discovery.devices.first
+        } else {
+            newDevice = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .front)
+        }
+        
+        guard let device = newDevice,
+              let newInput = try? AVCaptureDeviceInput(device: device) else {
             return
         }
         
         session.beginConfiguration()
-        
-        // Remove input atual
         session.removeInput(currentInput)
         
-        // Tenta adicionar novo
         if session.canAddInput(newInput) {
             session.addInput(newInput)
             self.currentInput = newInput
         } else {
-            // fallback (raro, mas seguro)
             session.addInput(currentInput)
         }
         
@@ -241,39 +381,45 @@ actor CameraSessionActor {
         } catch {}
     }
     
-    func setWhiteBalance(temperature: Float) {
+    func setExposureBias(_ bias: Float) {
         guard let device = currentInput?.device else { return }
         
         do {
             try device.lockForConfiguration()
+            defer { device.unlockForConfiguration() }
             
-            if temperature == 0 {
-                if device.isWhiteBalanceModeSupported(.continuousAutoWhiteBalance) {
-                    device.whiteBalanceMode = .continuousAutoWhiteBalance
-                }
-            } else {
-                let tempAndTint = AVCaptureDevice.WhiteBalanceTemperatureAndTintValues(
-                    temperature: temperature,
-                    tint: 0
-                )
-                
-                let gains = device.deviceWhiteBalanceGains(for: tempAndTint)
-                
-                // Clamp de segurança
-                let clampedGains = AVCaptureDevice.WhiteBalanceGains(
-                    redGain: max(1.0, min(gains.redGain, device.maxWhiteBalanceGain)),
-                    greenGain: max(1.0, min(gains.greenGain, device.maxWhiteBalanceGain)),
-                    blueGain: max(1.0, min(gains.blueGain, device.maxWhiteBalanceGain))
-                )
-                
-                device.setWhiteBalanceModeLocked(with: clampedGains, completionHandler: nil)
-            }
-            
-            device.unlockForConfiguration()
+            guard device.isExposureModeSupported(.continuousAutoExposure) else { return }
+            let clamped = min(max(bias, device.minExposureTargetBias), device.maxExposureTargetBias)
+            device.setExposureTargetBias(clamped, completionHandler: nil)
         } catch {
-            print("Erro White Balance: \(error)")
+            print("Erro Exposure Bias: \(error)")
         }
     }
+    
+    func getExposureBiasInfo() -> (Float, Float, Float, Bool) {
+        guard let device = currentInput?.device else { return (-2, 2, 0, true) }
+        let isAutoEnabled = abs(device.exposureTargetBias) < 0.0001
+        return (device.minExposureTargetBias, device.maxExposureTargetBias, device.exposureTargetBias, isAutoEnabled)
+    }
+    
+    func setAutoExposureEnabled(_ enabled: Bool) {
+        guard let device = currentInput?.device else { return }
+        
+        do {
+            try device.lockForConfiguration()
+            defer { device.unlockForConfiguration() }
+            
+            device.exposureMode = .continuousAutoExposure
+            
+            if enabled {
+                device.setExposureTargetBias(0.0, completionHandler: nil)
+            } // quando false, mantém o bias atual (manual)
+        } catch {
+            print("Erro Auto Exposure: \(error)")
+        }
+    }
+
+
     
     func applyVideoQuality(_ quality: VideoQuality) {
         guard let device = currentInput?.device else { return }
@@ -321,6 +467,17 @@ actor CameraSessionActor {
                 device.whiteBalanceMode = .continuousAutoWhiteBalance
             }
             
+            // Estratégia parecida com app Câmera: manter automações e mapear luz
+            if device.activeFormat.isVideoHDRSupported {
+                device.automaticallyAdjustsVideoHDREnabled = true
+            }
+            if device.isGlobalToneMappingEnabled {
+                device.isGlobalToneMappingEnabled = true
+            }
+            if device.minExposureTargetBias <= 0.0 && 0.0 <= device.maxExposureTargetBias {
+                device.setExposureTargetBias(0.0) { _ in }
+            }
+            
             // 🔥 MELHOR QUALIDADE DE IMAGEM
             if device.isSmoothAutoFocusSupported {
                 device.isSmoothAutoFocusEnabled = true
@@ -338,7 +495,7 @@ actor CameraSessionActor {
     func setCinematicEnabled(_ enabled: Bool) {
         guard let connection = videoOutput.connection(with: .video) else { return }
         if connection.isVideoStabilizationSupported {
-            connection.preferredVideoStabilizationMode = enabled ? .cinematicExtended : .off
+            connection.preferredVideoStabilizationMode = enabled ? .auto : .off
         }
     }
 }

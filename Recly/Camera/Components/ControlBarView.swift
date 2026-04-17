@@ -9,12 +9,12 @@ import SwiftUI
 
 struct ControlBarView: View {
     @ObservedObject var cameraManager: CameraManager
-    @State private var showWhiteBalance = false
     @State private var showSettings = false
+    @State private var showExposureControl = false
     
     var body: some View {
+        
         ZStack {
-            
             // 🔹 Conteúdo lateral (some quando grava)
             HStack {
                 leftControls
@@ -30,6 +30,7 @@ struct ControlBarView: View {
             recordButton
                 .zIndex(1)
         }
+        .animation(.spring(response: 0.35, dampingFraction: 0.8), value: showExposureControl)
         .sheet(isPresented: $showSettings) {
             CameraSettingsView(cameraManager: cameraManager, isPresented: $showSettings)
                 .presentationDetents([.large])
@@ -76,13 +77,14 @@ struct ControlBarView: View {
             }
             
             Button {
-                withAnimation(.spring()) {
-                    cameraManager.showWhiteBalanceBar.toggle()
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                    cameraManager.showExposureControl.toggle()
                 }
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
             } label: {
-                Image(systemName: "sun.max.fill")
+                Image(systemName: "plusminus")
                     .font(.system(size: 22))
-                    .foregroundStyle(cameraManager.showWhiteBalanceBar ? .yellow : .white.opacity(0.8))
+                    .foregroundStyle(cameraManager.showExposureControl ? .yellow : .white.opacity(0.8))
             }
         }
         .foregroundStyle(.white.opacity(0.8))
@@ -90,11 +92,6 @@ struct ControlBarView: View {
     
     private var rightControls: some View {
         HStack(spacing: 25) {
-            Button(action: {}) {
-                Image(systemName: "sparkles")
-                    .font(.system(size: 20))
-            }
-            
             Button(action: {
                 withAnimation(.easeInOut) {
                     cameraManager.switchCamera()
@@ -123,3 +120,4 @@ struct ControlBarView: View {
 #Preview {
     ControlBarView(cameraManager: CameraManager())
 }
+

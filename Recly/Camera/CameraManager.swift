@@ -22,8 +22,9 @@ class CameraManager: NSObject, ObservableObject {
     @Published var microphoneName: String = "..."
     @Published var showMicWarning: Bool = false
     @Published var micWarningMessage: String = ""
-    @Published var showWhiteBalanceBar: Bool = false
-    @Published var whiteBalance: Float = 0
+    @Published var exposureBias: Float = 0
+    @Published var exposureBiasRange: ClosedRange<Float> = -2...2
+    @Published var showExposureControl: Bool = false
     @Published var selectedQuality: VideoQuality = .uhd4k30
     @Published var projectName: String = "Recly"
     @Published var filePrefix: String = ""
@@ -78,7 +79,17 @@ class CameraManager: NSObject, ObservableObject {
     func setup() {
         Task {
             try? await sessionActor.configureSession()
-            await sessionActor.applyVideoQuality(self.selectedQuality) 
+            let mapping = await sessionActor.getZoomLabelMapping()
+            await MainActor.run {
+                self.zoomMapping = mapping
+                self.zoomFactor = mapping["0.5x"] ?? 1.0
+            }
+            await sessionActor.applyVideoQuality(self.selectedQuality)
+            let (minBias, maxBias, currentBias, _) = await sessionActor.getExposureBiasInfo()
+            await MainActor.run {
+                self.exposureBiasRange = minBias...maxBias
+                self.exposureBias = currentBias
+            }
             await startAudioMonitoring()
             observeAudioRouteChanges()
         }
@@ -142,7 +153,9 @@ class CameraManager: NSObject, ObservableObject {
     func zoom(factor: CGFloat) {
         Task {
             let newZoom = await sessionActor.setZoom(factor: factor)
-            self.zoomFactor = newZoom
+            await MainActor.run {
+                self.zoomFactor = newZoom
+            }
         }
     }
     
@@ -188,6 +201,31 @@ class CameraManager: NSObject, ObservableObject {
             }
         }
     }
+
+    // Adicione no CameraManager:
+
+//    func setFocusAndExposure(at point: CGPoint, previewLayer: AVCaptureVideoPreviewLayer) {
+//        Task {
+//            await sessionActor.setFocusAndExposure(at: point, in: previewLayer)
+//            await sessionActor.lockExposureAtCurrent()
+//            
+//            // 🔥 Animação de ajuste igual app nativo
+//            }
+//        }
+    
+    func setFocusAndExposure(at point: CGPoint, previewLayer: AVCaptureVideoPreviewLayer) {
+        Task {
+            await MainActor.run {
+                        self.exposureBias = 0.0
+                    }
+            // 2️⃣ Foca no ponto e calcula exposição automática para aquele ponto
+                   await sessionActor.setFocusOnly(at: point, in: previewLayer)
+                   
+                   // 3️⃣ Restaura bias 0 (garante que o hardware também está em 0)
+                   await sessionActor.restoreExposureBias(0.0)
+        }
+    }
+
     
     private func handleMicrophoneChange(notification: Notification) {
         guard let reasonValue = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt,
@@ -223,18 +261,15 @@ class CameraManager: NSObject, ObservableObject {
     func switchCamera() {
         Task {
             await sessionActor.switchCamera()
+            let (minBias, maxBias, currentBias, _) = await sessionActor.getExposureBiasInfo()
+            await MainActor.run {
+                self.exposureBiasRange = minBias...maxBias
+                self.exposureBias = currentBias
+            }
         }
     }
     
     // MARK: - Camera Effects
-    
-    func setWhiteBalance(_ value: Float) {
-        self.whiteBalance = value
-        
-        Task {
-            await sessionActor.setWhiteBalance(temperature: value)
-        }
-    }
     
     func setVideoQuality(_ quality: VideoQuality) {
         self.selectedQuality = quality
@@ -248,6 +283,15 @@ class CameraManager: NSObject, ObservableObject {
         self.isCinematicEnabled = enabled
         Task {
             await sessionActor.setCinematicEnabled(enabled)
+        }
+    }
+    
+    func setExposureBias(_ value: Float) {
+        let clamped = min(max(value, exposureBiasRange.lowerBound), exposureBiasRange.upperBound)
+        self.exposureBias = clamped
+        
+        Task {
+            await sessionActor.setExposureBias(clamped)
         }
     }
     

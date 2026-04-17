@@ -21,9 +21,13 @@ struct CameraPreview: UIViewRepresentable {
         view.layer.addSublayer(previewLayer)
         context.coordinator.previewLayer = previewLayer
         
-        // Adiciona o gesto de pinça
+        // Pinch para zoom
         let pinch = UIPinchGestureRecognizer(target: context.coordinator, action: #selector(context.coordinator.handlePinch(_:)))
         view.addGestureRecognizer(pinch)
+        
+        // Tap para foco/exposição automática estilo Apple
+        let tap = UITapGestureRecognizer(target: context.coordinator, action: #selector(context.coordinator.handleTap(_:)))
+        view.addGestureRecognizer(tap)
         
         return view
     }
@@ -51,6 +55,12 @@ struct CameraPreview: UIViewRepresentable {
             }
             let targetZoom = lastZoom * gesture.scale
             cameraManager.zoom(factor: targetZoom)
+        }
+
+        @objc func handleTap(_ gesture: UITapGestureRecognizer) {
+            guard let view = gesture.view else { return }
+            let point = gesture.location(in: view)
+            cameraManager.setFocusAndExposure(at: point, previewLayer: previewLayer!)
         }
     }
 }
